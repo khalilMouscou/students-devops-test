@@ -2,90 +2,89 @@ pipeline {
     agent any
 
     environment {
+        GIT_REPO     = 'https://github.com/khalilMouscou/students-devops-test.git'
+        GIT_BRANCH  = 'main'
         DOCKER_IMAGE = 'khalilmouscou/students-devops-test'
-        DOCKER_TAG = "1.0.0"
-        GIT_REPO = 'https://github.com/khalilMouscou/students-devops-test.git'
-        GIT_BRANCH = "main"
+        DOCKER_TAG   = '1.0.0'
+        CONTAINER_NAME = 'student-management'
     }
 
-tools {
-    maven 'M2_HOME'   // Ton Maven configuré dans Jenkins
-    jdk 'JAVA_17'     // Le nom exact du JDK configuré dans Jenkins
-}
+    tools {
+        maven 'M2_HOME'
+        jdk 'JAVA_17'
+    }
 
     stages {
 
-        stage('RÉCUPÉRATION CODE') {
+        stage('Checkout Code') {
             steps {
-                git branch: "${GIT_BRANCH}", url: "${GIT_REPO}"
+                git branch: GIT_BRANCH, url: GIT_REPO
             }
         }
 
-        stage('CONSTRUCTION LIVRABLE (Skip Tests)') {
+        stage('Build Maven (Skip Tests)') {
             steps {
-                sh "mvn clean package -DskipTests"
+                sh 'mvn clean package -DskipTests'
             }
         }
 
-        stage('BUILD DOCKER IMAGE') {
+        stage('Build Docker Image') {
             steps {
-                script {
-                    sh """
-                        docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-                        docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
-                        echo "✅ Image Docker construite: ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                    """
-                }
+                sh '''
+                    docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+                    docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
+                '''
             }
         }
 
-        stage('PUSH DOCKERHUB') {
+        stage('Push Image to DockerHub') {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'mouscou24',
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
-                    sh """
-                        echo \$DOCKER_PASS | docker login -u \$DOCKER_USER --password-stdin
+                    sh '''
+                        echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
                         docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
                         docker push ${DOCKER_IMAGE}:latest
-                        docker logout || true
-                        echo "✅ Images poussées sur DockerHub"
-                    """
+                        docker logout
+                    '''
                 }
             }
         }
 
-        stage('RUN DOCKER CONTAINER') {
+        stage('Run Docker Container') {
             steps {
-                sh """
-                    docker stop student-management || true
-                    docker rm student-management || true
-                    docker run -d --name student-management -p 8080:8080 ${DOCKER_IMAGE}:${DOCKER_TAG}
-                    echo "✅ Container lancé sur le port 8080"
-                """
+                sh '''
+                    docker stop ${CONTAINER_NAME} || true
+                    docker rm ${CONTAINER_NAME} || true
+
+                    docker run -d \
+                      --name ${CONTAINER_NAME} \
+                      --restart unless-stopped \
+                      -p 8080:8080 \
+                      ${DOCKER_IMAGE}:${DOCKER_TAG}
+                '''
             }
         }
     }
 
     post {
         success {
-            echo "🎉 PIPELINE TERMINÉ AVEC SUCCÈS !"
-            echo "📦 Image Docker: ${DOCKER_IMAGE}:${DOCKER_TAG}"
-            echo "🐋 DockerHub: https://hub.docker.com/r/najdnagati/student-management"
-            echo "🔗 Code Source: ${GIT_REPO}"
+            echo '🎉 PIPELINE TERMINÉE AVEC SUCCÈS'
+            echo "📦 Image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+            echo '🌍 Application: http://localhost:8080'
             archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-            sh "mvn clean || true"
         }
+
         failure {
-            echo "❌ ÉCHEC DU PIPELINE"
-            echo "Consultez les logs pour détails"
-            sh "mvn clean || true"
+            echo '❌ ÉCHEC DE LA PIPELINE'
         }
+
         always {
-            echo "🧹 Nettoyage des ressources Docker..."
-            sh "docker system prune -f || true"
+            echo '🧹 Nettoyage images Docker inutilisées'
+            sh 'docker image prune -f || true'
         }
     }
 }
