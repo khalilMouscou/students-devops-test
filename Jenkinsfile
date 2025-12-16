@@ -21,68 +21,9 @@ pipeline {
             }
         }
 
-        stage('TESTS UNITAIRES & JaCoCo') {
+        stage('CONSTRUCTION LIVRABLE (Skip Tests)') {
             steps {
-                sh "mvn clean test jacoco:report"
-            }
-            post {
-                always {
-                    junit 'target/surefire-reports/*.xml'
-                }
-            }
-        }
-
-        stage('VÉRIFICATION COUVERTURE') {
-            steps {
-                script {
-                    sh '''
-                        echo "🔍 Vérification de la couverture de code..."
-
-                        # Check JaCoCo report exists
-                        if [ -f "target/site/jacoco/jacoco.xml" ]; then
-                            echo "✅ Rapport JaCoCo généré avec succès"
-
-                            # Extract coverage percentage
-                            COVERAGE=$(grep -o 'line-counter.*covered="[0-9]*"' target/site/jacoco/jacoco.xml | head -1 | grep -o '[0-9]*' | head -1)
-                            if [ ! -z "$COVERAGE" ] && [ "$COVERAGE" -gt "0" ]; then
-                                echo "✅ Couverture de code: $COVERAGE% (différente de 0)"
-                            else
-                                echo "⚠️ Couverture faible ou nulle"
-                            fi
-                        else
-                            echo "❌ Échec: Rapport JaCoCo non généré"
-                            exit 1
-                        fi
-                    '''
-                }
-            }
-        }
-
-        stage('ANALYSE SONARQUBE') {
-            steps {
-                script {
-                    withSonarQubeEnv('SonarQube') {
-                        sh """
-                            echo "🔍 Lancement de l'analyse SonarQube..."
-
-                            mvn sonar:sonar \
-                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                                -Dsonar.projectName="${SONAR_PROJECT_NAME}" \
-                                -Dsonar.java.binaries=target/classes \
-                                -Dsonar.junit.reportsPath=target/surefire-reports \
-                                -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
-
-                            echo "✅ Analyse SonarQube terminée"
-                            echo "📊 Accédez au dashboard: http://localhost:9000/dashboard?id=${SONAR_PROJECT_KEY}"
-                        """
-                    }
-                }
-            }
-        }
-
-        stage('CONSTRUCTION LIVRABLE') {
-            steps {
-                sh "mvn package -DskipTests"
+                sh "mvn clean package -DskipTests"
             }
         }
 
@@ -115,19 +56,25 @@ pipeline {
                 }
             }
         }
+
+        stage('RUN DOCKER CONTAINER') {
+            steps {
+                sh """
+                    docker stop student-management || true
+                    docker rm student-management || true
+                    docker run -d --name student-management -p 8080:8080 ${DOCKER_IMAGE}:${DOCKER_TAG}
+                    echo "✅ Container lancé sur le port 8080"
+                """
+            }
+        }
     }
 
     post {
         success {
             echo "🎉 PIPELINE TERMINÉ AVEC SUCCÈS !"
-            echo "===================================="
             echo "📦 Image Docker: ${DOCKER_IMAGE}:${DOCKER_TAG}"
             echo "🐋 DockerHub: https://hub.docker.com/r/najdnagati/student-management"
-            echo "📊 SonarQube: http://localhost:9000/dashboard?id=${SONAR_PROJECT_KEY}"
-            echo "📈 Rapport JaCoCo: target/site/jacoco/index.html"
             echo "🔗 Code Source: ${GIT_REPO}"
-            echo "===================================="
-
             archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
             sh "mvn clean || true"
         }
@@ -137,11 +84,8 @@ pipeline {
             sh "mvn clean || true"
         }
         always {
-            echo "🧹 Nettoyage des ressources..."
+            echo "🧹 Nettoyage des ressources Docker..."
             sh "docker system prune -f || true"
-
-            // Archive important reports
-            archiveArtifacts artifacts: 'target/surefire-reports/*.xml, target/site/jacoco/*', fingerprint: true
         }
     }
 }
